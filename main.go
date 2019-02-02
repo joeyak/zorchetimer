@@ -2,74 +2,91 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"syscall"
 	"time"
+	"unicode"
 
-	"github.com/eiannone/keyboard"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
-/* TODO
-O: 't' for showing current time
-O: show percent of time
-?: use type times []time.Time
-*/
+type stopwatch struct {
+	elapsed     time.Duration
+	lastElapsed time.Duration
+	start       time.Time
+	lastStart   time.Time
+	isRunning   bool
+}
+
+func (s *stopwatch) Start() {
+	if !s.isRunning {
+		s.start = time.Now()
+		s.lastStart = s.start
+		s.isRunning = true
+	}
+}
+
+func (s *stopwatch) Stop() {
+	if s.isRunning {
+		s.lastElapsed = time.Since(s.lastStart)
+		s.elapsed += time.Since(s.start)
+		s.isRunning = false
+	}
+}
+
+func (s *stopwatch) Flip() {
+	if s.isRunning {
+		s.Stop()
+	} else {
+		s.Start()
+	}
+}
+
+func (s *stopwatch) Elapsed() time.Duration {
+	if s.isRunning {
+		s.elapsed += time.Since(s.start)
+		s.start = time.Now()
+	}
+	return s.elapsed
+}
+
+func newStopwatch(start bool) stopwatch {
+	var sw stopwatch
+	if start {
+		sw.Start()
+	}
+	return sw
+}
+
+// Format Duration
+func fd(d time.Duration) string {
+	var ns string
+	var period bool
+	for _, r := range d.String() {
+		if (period && unicode.IsDigit(r)) || r == '.' {
+			period = true
+			continue
+		}
+		ns += string(r)
+	}
+	return ns
+}
 
 func main() {
-	err := keyboard.Open()
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer keyboard.Close()
+	working, distracted := newStopwatch(true), newStopwatch(false)
 
-	var exit bool
-	var distracted []time.Time
-	working := []time.Time{time.Now()}
+	fmt.Println("press enter to flip, ctrl+c to exit")
+	fmt.Println("Type: Current Elapsed (Last Elapsed)")
 
-	fmt.Println("Space for flipping status, enter to get times")
-
-	printStatus := func() {
-		fmt.Print("\rStatus: ")
-		if len(working)&1 == 1 {
-			fmt.Print("Working")
-		} else {
-			fmt.Print("Distracted")
+	go func() {
+		for {
+			terminal.ReadPassword(int(syscall.Stdin))
+			working.Flip()
+			distracted.Flip()
 		}
-		fmt.Print("          ")
-	}
-	printStatus()
+	}()
 
-	for !exit {
-		_, key, _ := keyboard.GetKey()
-		now := time.Now()
-		switch key {
-		case keyboard.KeySpace:
-			working = append(working, now)
-			distracted = append(distracted, now)
-			printStatus()
-		case keyboard.KeyEnter:
-			exit = true
-			if len(working)&1 == 1 { // odd
-				working = append(working, now)
-			} else {
-				distracted = append(distracted, now)
-			}
-		}
+	for {
+		fmt.Printf("\rWorking: %s (%s)\t\tDistracted %s (%s)\t\t", fd(working.Elapsed()), fd(working.lastElapsed), fd(distracted.Elapsed()), fd(distracted.lastElapsed))
+		time.Sleep(time.Millisecond * 50)
 	}
-
-	var workingDuration time.Duration
-	var distractedDuration time.Duration
-
-	for i := range working {
-		if i&1 == 0 { // even
-			workingDuration += working[i+1].Sub(working[i])
-		}
-	}
-	for i := range distracted {
-		if i&1 == 0 { // even
-			distractedDuration += distracted[i+1].Sub(distracted[i])
-		}
-	}
-
-	fmt.Printf("\nZorche's Working Time %v\n", workingDuration)
-	fmt.Printf("Zorche's Distracted Time %v\n", distractedDuration)
 }
